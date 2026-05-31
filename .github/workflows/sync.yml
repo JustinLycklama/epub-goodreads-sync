@@ -23,8 +23,9 @@ jobs:
       - name: Run sync
         env:
           CI: "true"
-          DEBUG: "true"
-        run: python book-sync-anna.py
+          ZLIBRARY_EMAIL: ${{ secrets.ZLIBRARY_EMAIL }}
+          ZLIBRARY_PASSWORD: ${{ secrets.ZLIBRARY_PASSWORD }}
+        run: python book-sync-zlib.py
 
       - name: Upload epubs
         uses: actions/upload-artifact@v4
