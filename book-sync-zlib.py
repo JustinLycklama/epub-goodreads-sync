@@ -117,9 +117,12 @@ async def zlib_login():
         sys.exit(1)
     lib = zlibrary.AsyncZlib()
     await lib.login(email, password)
-    limits = await lib.profile.get_limits()
-    remaining = limits.get("daily_remaining", "?")
-    print(f"  Logged in. Daily downloads remaining: {remaining}")
+    try:
+        limits = await lib.profile.get_limits()
+        remaining = limits.get("daily_remaining", "?")
+        print(f"  Logged in. Daily downloads remaining: {remaining}")
+    except Exception:
+        print("  Logged in.")
     return lib
 
 
