@@ -5,12 +5,15 @@ Downloads missing Goodreads "want to read" books as ePubs via Z-Library's
 mobile JSON API (/eapi/) — no HTML scraping, no antibot issues.
 
 Modes:
-  Local:  Checks Calibre library to determine what's missing, adds downloads to Calibre.
-  CI:     Uses downloaded.txt to track what's been fetched. Saves epubs to ./downloads/.
-          Credentials read from ZLIBRARY_EMAIL / ZLIBRARY_PASSWORD env vars.
+  Local:  Checks Calibre library (calibredb) to determine what's missing,
+          adds downloads directly to Calibre.
+  CI:     Checks Google Drive (Incoming + Calibre Library folders) to determine
+          what's missing. Downloads and uploads new epubs to Drive/Incoming.
+          Credentials from env vars:
+            ZLIBRARY_EMAIL, ZLIBRARY_PASSWORD, GDRIVE_SERVICE_ACCOUNT (JSON)
 
 Dependencies:
-    pip install feedparser requests beautifulsoup4
+    pip install feedparser requests beautifulsoup4 google-api-python-client google-auth
 """
 
 import feedparser
@@ -20,6 +23,7 @@ import json
 import os
 import re
 import sys
+import io
 from pathlib import Path
 
 # --- Config ---
@@ -29,9 +33,10 @@ CALIBREDB = r"C:\Program Files\Calibre2\calibredb.exe"
 
 CI = os.getenv("CI", "false").lower() == "true"
 REPO_ROOT = Path(__file__).parent
-DOWNLOAD_DIR = REPO_ROOT / "downloads"
 DOWNLOADED_FILE = REPO_ROOT / "downloaded.txt"
 LOCAL_TEMP_DIR = Path(r"C:\Users\Justin\Documents\callibre-temp")
+
+GDRIVE_INCOMING_NAME = "Incoming"
 
 RSS_URL = f"https://www.goodreads.com/review/list_rss/{GOODREADS_USER_ID}?shelf=to-read"
 
@@ -61,10 +66,11 @@ def normalize(text):
 
 
 def clean_title(title):
+    """Strip Goodreads series annotation e.g. '(Mistborn, #5)'"""
     return re.sub(r"\s*\(.*?\)\s*$", "", title).strip()
 
 
-# --- Book sources ---
+# --- Goodreads ---
 
 def get_goodreads_books():
     print("Fetching Goodreads want-to-read shelf...")
@@ -82,34 +88,84 @@ def get_goodreads_books():
     return books
 
 
-def get_existing_books():
-    if CI:
-        print("Reading downloaded.txt...")
-        if not DOWNLOADED_FILE.exists():
-            print("  (none yet)")
-            return set()
-        titles = {line.strip() for line in DOWNLOADED_FILE.read_text().splitlines() if line.strip()}
-        print(f"  {len(titles)} books already downloaded")
-        return titles
-    else:
-        print("Reading Calibre library...")
-        result = subprocess.run(
-            [CALIBREDB, "list", "--fields", "title,authors", "--for-machine",
-             "--library-path", CALIBRE_LIBRARY],
-            capture_output=True, text=True,
-        )
-        if result.returncode != 0:
-            print(f"ERROR: calibredb failed: {result.stderr}")
-            sys.exit(1)
-        data = json.loads(result.stdout)
-        titles = {normalize(book["title"]) for book in data}
-        print(f"  {len(titles)} books in Calibre")
-        return titles
+# --- Existing book detection ---
+
+def get_existing_books_downloaded_txt():
+    """Check downloaded.txt for already-fetched books (CI mode)."""
+    print("Reading downloaded.txt...")
+    if not DOWNLOADED_FILE.exists():
+        print("  (none yet)")
+        return set()
+    titles = {line.strip() for line in DOWNLOADED_FILE.read_text().splitlines() if line.strip()}
+    print(f"  {len(titles)} books already downloaded")
+    return titles
 
 
-def mark_downloaded(title):
-    with DOWNLOADED_FILE.open("a") as f:
-        f.write(normalize(clean_title(title)) + "\n")
+def get_existing_books_local():
+    """Check Calibre library via calibredb (local mode)."""
+    print("Reading Calibre library...")
+    result = subprocess.run(
+        [CALIBREDB, "list", "--fields", "title,authors", "--for-machine",
+         "--library-path", CALIBRE_LIBRARY],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(f"ERROR: calibredb failed: {result.stderr}")
+        sys.exit(1)
+    data = json.loads(result.stdout)
+    titles = {normalize(book["title"]) for book in data}
+    print(f"  {len(titles)} books in Calibre")
+    return titles
+
+
+# --- Google Drive ---
+
+def get_drive_service():
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+
+    sa_json = os.getenv("GDRIVE_SERVICE_ACCOUNT")
+    if not sa_json:
+        print("ERROR: GDRIVE_SERVICE_ACCOUNT env var not set.")
+        sys.exit(1)
+    info = json.loads(sa_json)
+    creds = service_account.Credentials.from_service_account_info(
+        info, scopes=["https://www.googleapis.com/auth/drive"]
+    )
+    return build("drive", "v3", credentials=creds)
+
+
+def find_incoming_folder(drive_service):
+    """Return the Drive folder ID for the Incoming folder."""
+    resp = drive_service.files().list(
+        q=f"name='{GDRIVE_INCOMING_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false",
+        fields="files(id, name)",
+    ).execute()
+    files = resp.get("files", [])
+    if not files:
+        print(f"ERROR: Could not find '{GDRIVE_INCOMING_NAME}' folder in Drive.")
+        sys.exit(1)
+    return files[0]["id"]
+
+
+def upload_to_drive(drive_service, folder_id, filepath):
+    from googleapiclient.http import MediaIoBaseUpload
+
+    file_metadata = {
+        "name": filepath.name,
+        "parents": [folder_id],
+    }
+    try:
+        with open(filepath, "rb") as f:
+            media = MediaIoBaseUpload(f, mimetype="application/epub+zip", resumable=True)
+            drive_service.files().create(
+                body=file_metadata, media_body=media, fields="id"
+            ).execute()
+        print(f"  Uploaded to Drive/Incoming: {filepath.name}")
+        return True
+    except Exception as e:
+        print(f"  Drive upload failed: {e}")
+        return False
 
 
 # --- Z-Library eapi ---
@@ -177,9 +233,8 @@ def zlib_download(book, out_dir):
     return filepath
 
 
-def download_epub(title, author, out_dir):
+def download_epub(title, out_dir):
     search_title = clean_title(title)
-
     try:
         results = zlib_search(search_title)
     except Exception as e:
@@ -221,20 +276,31 @@ def add_to_calibre(filepath):
 
 # --- Main ---
 
-def main():
-    out_dir = DOWNLOAD_DIR if CI else LOCAL_TEMP_DIR
-    out_dir.mkdir(parents=True, exist_ok=True)
+def mark_downloaded(title):
+    with DOWNLOADED_FILE.open("a") as f:
+        f.write(normalize(clean_title(title)) + "\n")
 
+
+def main():
     if CI:
-        print("Running in CI mode — downloads go to ./downloads/, tracking via downloaded.txt")
+        print("Running in CI mode — uploading to Google Drive/Incoming")
+        drive_service = get_drive_service()
+        incoming_folder_id = find_incoming_folder(drive_service)
+        existing = get_existing_books_downloaded_txt()
+        out_dir = REPO_ROOT / "downloads"
     else:
         print("Running in local mode — checking Calibre, adding downloaded books automatically")
+        drive_service = None
+        incoming_folder_id = None
+        existing = get_existing_books_local()
+        out_dir = LOCAL_TEMP_DIR
 
-    print("Logging in to Z-Library...")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    print("\nLogging in to Z-Library...")
     downloads_left = zlib_login()
 
     gr_books = get_goodreads_books()
-    existing = get_existing_books()
 
     missing = [b for b in gr_books if normalize(clean_title(b["title"])) not in existing]
 
@@ -242,9 +308,9 @@ def main():
         print("\nAll shelf books are already downloaded.")
         return
 
-    if downloads_left < len(missing):
+    if CI and downloads_left < len(missing):
         print(f"\nNote: {len(missing)} books to download but only {downloads_left} downloads left today.")
-        print(f"Will download as many as possible; re-run tomorrow for the rest.\n")
+        print("Will download as many as possible; re-run tomorrow for the rest.\n")
 
     print(f"\n{len(missing)} book(s) to download:")
     for b in missing:
@@ -255,10 +321,14 @@ def main():
     for book in missing:
         title, author = book["title"], book["author"]
         print(f"[{title}]")
-        filepath = download_epub(title, author, out_dir)
+        filepath = download_epub(title, out_dir)
         if filepath:
             if CI:
-                mark_downloaded(title)
+                if upload_to_drive(drive_service, incoming_folder_id, filepath):
+                    filepath.unlink()
+                    mark_downloaded(title)
+                else:
+                    skipped.append(title)
             else:
                 add_to_calibre(filepath)
         else:

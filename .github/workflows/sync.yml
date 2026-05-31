@@ -1,14 +1,14 @@
 name: Sync Books
 
 on:
-  workflow_dispatch:  # manual trigger from GitHub UI or gh CLI
+  workflow_dispatch:
 
 jobs:
   sync:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: write  # needed to commit downloaded.txt back
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -25,15 +25,8 @@ jobs:
           CI: "true"
           ZLIBRARY_EMAIL: ${{ secrets.ZLIBRARY_EMAIL }}
           ZLIBRARY_PASSWORD: ${{ secrets.ZLIBRARY_PASSWORD }}
+          GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
         run: python book-sync-zlib.py
-
-      - name: Upload epubs
-        uses: actions/upload-artifact@v4
-        with:
-          name: epubs-${{ github.run_id }}
-          path: downloads/
-          retention-days: 30
-          if-no-files-found: warn
 
       - name: Commit downloaded.txt
         run: |
@@ -44,5 +37,5 @@ jobs:
             git commit -m "chore: update downloaded books list"
             git push
           else
-            echo "No changes to downloaded.txt"
+            echo "No new books downloaded"
           fi
