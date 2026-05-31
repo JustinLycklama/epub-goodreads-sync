@@ -142,9 +142,16 @@ def anna_search(query, mirror):
     soup = BeautifulSoup(r.text, "html.parser")
     md5s = []
     for a in soup.find_all("a", href=True):
-        m = re.match(r"/md5/([a-f0-9]{32})", a["href"], re.I)
+        href = a["href"]
+        # Handle both relative (/md5/HASH) and absolute (https://mirror/md5/HASH) links
+        m = re.search(r"/md5/([a-f0-9]{32})", href, re.I)
         if m and m.group(1) not in md5s:
             md5s.append(m.group(1))
+
+    if not md5s and os.getenv("DEBUG"):
+        # Print a snippet of the HTML to diagnose parsing failures
+        print(f"  DEBUG: No MD5s found. Response snippet:\n{r.text[:1000]}")
+
     return md5s
 
 

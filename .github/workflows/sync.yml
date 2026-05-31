@@ -23,6 +23,7 @@ jobs:
       - name: Run sync
         env:
           CI: "true"
+          DEBUG: "true"
         run: python book-sync-anna.py
 
       - name: Upload epubs
