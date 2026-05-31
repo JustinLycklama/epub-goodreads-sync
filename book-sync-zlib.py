@@ -1,7 +1,8 @@
 """
 book-sync-zlib.py
 
-Downloads missing Goodreads "want to read" books as ePubs via Z-Library.
+Downloads missing Goodreads "want to read" books as ePubs via Z-Library's
+mobile JSON API (/eapi/) — no HTML scraping, no antibot issues.
 
 Modes:
   Local:  Checks Calibre library to determine what's missing, adds downloads to Calibre.
@@ -9,10 +10,9 @@ Modes:
           Credentials read from ZLIBRARY_EMAIL / ZLIBRARY_PASSWORD env vars.
 
 Dependencies:
-    pip install feedparser requests beautifulsoup4 zlibrary
+    pip install feedparser requests beautifulsoup4
 """
 
-import asyncio
 import feedparser
 import requests
 import subprocess
@@ -21,9 +21,6 @@ import os
 import re
 import sys
 from pathlib import Path
-
-import zlibrary
-from zlibrary import Language, Extension
 
 # --- Config ---
 GOODREADS_USER_ID = "197955244"
@@ -38,12 +35,20 @@ LOCAL_TEMP_DIR = Path(r"C:\Users\Justin\Documents\callibre-temp")
 
 RSS_URL = f"https://www.goodreads.com/review/list_rss/{GOODREADS_USER_ID}?shelf=to-read"
 
+ZLIB_DOMAIN = "1lib.sk"
+ZLIB_BASE = f"https://{ZLIB_DOMAIN}"
+HEADERS = {
+    "Content-Type": "application/x-www-form-urlencoded",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+}
+
 SESSION = requests.Session()
-SESSION.headers["User-Agent"] = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.0.0 Safari/537.36"
-)
+SESSION.headers.update(HEADERS)
+SESSION.cookies.set("siteLanguageV2", "en")
 
 
 # --- Helpers ---
@@ -107,67 +112,90 @@ def mark_downloaded(title):
         f.write(normalize(clean_title(title)) + "\n")
 
 
-# --- Z-Library ---
+# --- Z-Library eapi ---
 
-async def zlib_login():
+def zlib_login():
     email = os.getenv("ZLIBRARY_EMAIL")
     password = os.getenv("ZLIBRARY_PASSWORD")
     if not email or not password:
         print("ERROR: ZLIBRARY_EMAIL and ZLIBRARY_PASSWORD must be set.")
         sys.exit(1)
-    lib = zlibrary.AsyncZlib()
-    await lib.login(email, password)
-    try:
-        limits = await lib.profile.get_limits()
-        remaining = limits.get("daily_remaining", "?")
-        print(f"  Logged in. Daily downloads remaining: {remaining}")
-    except Exception:
-        print("  Logged in.")
-    return lib
+
+    r = SESSION.post(f"{ZLIB_BASE}/eapi/user/login",
+                     data={"email": email, "password": password}, timeout=20)
+    resp = r.json()
+    if not resp.get("success"):
+        print(f"ERROR: Z-Library login failed: {resp.get('error', resp)}")
+        sys.exit(1)
+
+    user = resp["user"]
+    SESSION.cookies.set("remix_userid", str(user["id"]))
+    SESSION.cookies.set("remix_userkey", user["remix_userkey"])
+
+    downloads_left = user.get("downloads_limit", 10) - user.get("downloads_today", 0)
+    print(f"  Logged in as {user['email']}. Downloads remaining today: {downloads_left}")
+    return downloads_left
 
 
-async def zlib_search_and_download(lib, title, author, out_dir):
+def zlib_search(query):
+    r = SESSION.post(f"{ZLIB_BASE}/eapi/book/search", data={
+        "message": query,
+        "extensions[]": "epub",
+        "languages[]": "english",
+        "limit": 5,
+    }, timeout=20)
+    resp = r.json()
+    return resp.get("books", [])
+
+
+def zlib_download(book, out_dir):
+    book_id = book["id"]
+    hash_id = book["hash"]
+    r = SESSION.get(f"{ZLIB_BASE}/eapi/book/{book_id}/{hash_id}/file", timeout=20)
+    resp = r.json()
+
+    file_info = resp.get("file")
+    if not file_info:
+        return None
+
+    dl_url = file_info.get("downloadLink")
+    if not dl_url:
+        return None
+
+    res = SESSION.get(dl_url, timeout=90, stream=True)
+    if res.status_code != 200:
+        return None
+
+    content = b"".join(res.iter_content(8192))
+    if len(content) < 10_000 or not content.startswith(b"PK"):
+        return None
+
+    title = file_info.get("description", book.get("title", "book"))
+    safe_name = re.sub(r"[^\w\s-]", "", title)[:80].strip()
+    filepath = out_dir / f"{safe_name}.epub"
+    filepath.write_bytes(content)
+    return filepath
+
+
+def download_epub(title, author, out_dir):
     search_title = clean_title(title)
 
     try:
-        paginator = await lib.search(
-            q=search_title,
-            count=5,
-            lang=[Language.ENGLISH],
-            extensions=[Extension.EPUB],
-        )
-        results = await paginator.next()
+        results = zlib_search(search_title)
     except Exception as e:
-        print(f"  Search failed: {e}")
+        print(f"  Search error: {e}")
         return None
 
     if not results:
         print(f"  Not found on Z-Library: {search_title}")
         return None
 
-    # Try results in order until one downloads successfully
-    for result in results:
+    for book in results:
         try:
-            book = await result.fetch()
-        except Exception:
-            continue
-
-        dl_url = book.get("download_url")
-        if not dl_url:
-            continue
-
-        try:
-            r = SESSION.get(dl_url, timeout=90, stream=True, allow_redirects=True)
-            if r.status_code != 200:
-                continue
-            content = b"".join(r.iter_content(8192))
-            if len(content) < 10_000 or not content.startswith(b"PK"):
-                continue
-            safe_name = re.sub(r"[^\w\s-]", "", search_title)[:80].strip()
-            filepath = out_dir / f"{safe_name}.epub"
-            filepath.write_bytes(content)
-            print(f"  Downloaded: {filepath.name}")
-            return filepath
+            filepath = zlib_download(book, out_dir)
+            if filepath:
+                print(f"  Downloaded: {filepath.name}")
+                return filepath
         except Exception:
             continue
 
@@ -193,7 +221,7 @@ def add_to_calibre(filepath):
 
 # --- Main ---
 
-async def main():
+def main():
     out_dir = DOWNLOAD_DIR if CI else LOCAL_TEMP_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -203,7 +231,7 @@ async def main():
         print("Running in local mode — checking Calibre, adding downloaded books automatically")
 
     print("Logging in to Z-Library...")
-    lib = await zlib_login()
+    downloads_left = zlib_login()
 
     gr_books = get_goodreads_books()
     existing = get_existing_books()
@@ -214,6 +242,10 @@ async def main():
         print("\nAll shelf books are already downloaded.")
         return
 
+    if downloads_left < len(missing):
+        print(f"\nNote: {len(missing)} books to download but only {downloads_left} downloads left today.")
+        print(f"Will download as many as possible; re-run tomorrow for the rest.\n")
+
     print(f"\n{len(missing)} book(s) to download:")
     for b in missing:
         print(f"  - {b['title']} ({b['author']})")
@@ -223,7 +255,7 @@ async def main():
     for book in missing:
         title, author = book["title"], book["author"]
         print(f"[{title}]")
-        filepath = await zlib_search_and_download(lib, title, author, out_dir)
+        filepath = download_epub(title, author, out_dir)
         if filepath:
             if CI:
                 mark_downloaded(title)
@@ -240,4 +272,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

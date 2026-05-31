@@ -1,4 +1,3 @@
 feedparser
 requests
 beautifulsoup4
-zlibrary
