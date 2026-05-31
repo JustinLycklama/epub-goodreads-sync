@@ -34,6 +34,7 @@ CALIBREDB = r"C:\Program Files\Calibre2\calibredb.exe"
 CI = os.getenv("CI", "false").lower() == "true"
 REPO_ROOT = Path(__file__).parent
 DOWNLOADED_FILE = REPO_ROOT / "downloaded.txt"
+REVIEW_FILE = REPO_ROOT / "needs_review.txt"
 LOCAL_TEMP_DIR = Path(r"C:\Users\Justin\Documents\callibre-temp")
 
 GDRIVE_INCOMING_NAME = "Incoming"
@@ -121,16 +122,21 @@ def get_existing_books_local():
 # --- Google Drive ---
 
 def get_drive_service():
-    from google.oauth2 import service_account
+    from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
 
-    sa_json = os.getenv("GDRIVE_SERVICE_ACCOUNT")
-    if not sa_json:
-        print("ERROR: GDRIVE_SERVICE_ACCOUNT env var not set.")
+    client_id = os.getenv("GDRIVE_CLIENT_ID")
+    client_secret = os.getenv("GDRIVE_CLIENT_SECRET")
+    refresh_token = os.getenv("GDRIVE_REFRESH_TOKEN")
+    if not all([client_id, client_secret, refresh_token]):
+        print("ERROR: GDRIVE_CLIENT_ID, GDRIVE_CLIENT_SECRET, and GDRIVE_REFRESH_TOKEN must all be set.")
         sys.exit(1)
-    info = json.loads(sa_json)
-    creds = service_account.Credentials.from_service_account_info(
-        info, scopes=["https://www.googleapis.com/auth/drive"]
+    creds = Credentials(
+        token=None,
+        refresh_token=refresh_token,
+        client_id=client_id,
+        client_secret=client_secret,
+        token_uri="https://oauth2.googleapis.com/token",
     )
     return build("drive", "v3", credentials=creds)
 
@@ -233,7 +239,36 @@ def zlib_download(book, out_dir):
     return filepath
 
 
-def download_epub(title, out_dir):
+def title_matches(search_title, result_title):
+    """Return True if result_title is a plausible match for search_title."""
+    s = normalize(search_title)
+    r = normalize(result_title)
+    if s == r:
+        return True
+    search_words = set(s.split())
+    result_words = set(r.split())
+    if not search_words:
+        return False
+    if search_words.issubset(result_words):
+        return True
+    union = search_words | result_words
+    if len(union) > 0 and len(search_words & result_words) / len(union) >= 0.7:
+        return True
+    return False
+
+
+def author_matches(search_author, result_author):
+    """Return True if authors share at least one significant word (last name)."""
+    if not search_author or not result_author:
+        return False
+    s = normalize(search_author)
+    r = normalize(result_author)
+    s_words = set(s.split()) - {"and", "the", "jr", "sr", "ii", "iii"}
+    r_words = set(r.split()) - {"and", "the", "jr", "sr", "ii", "iii"}
+    return bool(s_words & r_words)
+
+
+def download_epub(title, author, out_dir):
     search_title = clean_title(title)
     try:
         results = zlib_search(search_title)
@@ -245,7 +280,27 @@ def download_epub(title, out_dir):
         print(f"  Not found on Z-Library: {search_title}")
         return None
 
-    for book in results:
+    title_matched = [b for b in results if title_matches(search_title, b.get("title", ""))]
+    if not title_matched:
+        best = results[0]
+        reason = f"no title match (top result: \"{best.get('title', '?')}\" by {best.get('author', '?')})"
+        print(f"  Skipped — {reason}")
+        mark_for_review(title, author, reason)
+        return None
+
+    # Sort: author matches first, then title-only matches
+    author_confirmed = [b for b in title_matched if author_matches(author, b.get("author", ""))]
+    title_only = [b for b in title_matched if not author_matches(author, b.get("author", ""))]
+
+    if author_confirmed:
+        ranked = author_confirmed + title_only
+    else:
+        reason = f"title matched but no author match (expected: {author})"
+        print(f"  Warning — {reason}")
+        mark_for_review(title, author, reason)
+        ranked = title_only
+
+    for book in ranked:
         try:
             filepath = zlib_download(book, out_dir)
             if filepath:
@@ -254,6 +309,7 @@ def download_epub(title, out_dir):
         except Exception:
             continue
 
+    mark_for_review(title, author, "download failed (all attempts)")
     print(f"  All download attempts failed: {search_title}")
     return None
 
@@ -279,6 +335,19 @@ def add_to_calibre(filepath):
 def mark_downloaded(title):
     with DOWNLOADED_FILE.open("a") as f:
         f.write(normalize(clean_title(title)) + "\n")
+
+
+def mark_for_review(title, author, reason):
+    """Append to needs_review.txt if not already present (deduped by title)."""
+    entry = f"{clean_title(title)} | {author} | {reason}"
+    if REVIEW_FILE.exists():
+        existing = REVIEW_FILE.read_text().splitlines()
+        # Dedup by title+author prefix
+        key = f"{clean_title(title)} | {author}"
+        if any(line.startswith(key) for line in existing):
+            return
+    with REVIEW_FILE.open("a") as f:
+        f.write(entry + "\n")
 
 
 def main():
@@ -321,7 +390,7 @@ def main():
     for book in missing:
         title, author = book["title"], book["author"]
         print(f"[{title}]")
-        filepath = download_epub(title, out_dir)
+        filepath = download_epub(title, author, out_dir)
         if filepath:
             if CI:
                 if upload_to_drive(drive_service, incoming_folder_id, filepath):

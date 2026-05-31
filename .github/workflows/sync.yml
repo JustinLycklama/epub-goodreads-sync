@@ -2,6 +2,8 @@ name: Sync Books
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 8 * * 1"  # Every Monday at 8am UTC
 
 jobs:
   sync:
@@ -25,14 +27,16 @@ jobs:
           CI: "true"
           ZLIBRARY_EMAIL: ${{ secrets.ZLIBRARY_EMAIL }}
           ZLIBRARY_PASSWORD: ${{ secrets.ZLIBRARY_PASSWORD }}
-          GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
         run: python book-sync-zlib.py
 
       - name: Commit downloaded.txt
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add downloaded.txt
+          git add downloaded.txt needs_review.txt
           if ! git diff --staged --quiet; then
             git commit -m "chore: update downloaded books list"
             git push
