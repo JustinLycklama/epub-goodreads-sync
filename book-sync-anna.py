@@ -36,7 +36,13 @@ DOWNLOADED_FILE = REPO_ROOT / "downloaded.txt"
 LOCAL_TEMP_DIR = Path(r"C:\Users\Justin\Documents\callibre-temp")
 
 RSS_URL = f"https://www.goodreads.com/review/list_rss/{GOODREADS_USER_ID}?shelf=to-read"
-ANNA_BASE = "https://annas-archive.org"
+ANNA_MIRRORS = [
+    "https://annas-archive.org",
+    "https://annas-archive.gs",
+    "https://annas-archive.li",
+    "https://anna.library",
+]
+ANNA_BASE = None  # resolved at runtime
 
 SESSION = requests.Session()
 SESSION.headers["User-Agent"] = (
@@ -111,8 +117,21 @@ def mark_downloaded(title):
 
 # --- Anna's Archive ---
 
-def anna_search(query):
-    url = f"{ANNA_BASE}/search"
+def resolve_mirror():
+    """Return the first reachable Anna's Archive mirror."""
+    for mirror in ANNA_MIRRORS:
+        try:
+            r = SESSION.get(f"{mirror}/search?q=test&ext=epub", timeout=10)
+            if r.status_code < 500:
+                print(f"  Using mirror: {mirror}")
+                return mirror
+        except Exception:
+            continue
+    return None
+
+
+def anna_search(query, mirror):
+    url = f"{mirror}/search"
     params = {"q": query, "ext": "epub", "lang": "en"}
     try:
         r = SESSION.get(url, params=params, timeout=20)
@@ -129,16 +148,16 @@ def anna_search(query):
     return md5s
 
 
-def get_download_urls(md5):
-    urls = [f"{ANNA_BASE}/slow_download/{md5}/0/0"]
+def get_download_urls(md5, mirror):
+    urls = [f"{mirror}/slow_download/{md5}/0/0"]
     try:
-        r = SESSION.get(f"{ANNA_BASE}/md5/{md5}", timeout=20)
+        r = SESSION.get(f"{mirror}/md5/{md5}", timeout=20)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         for a in soup.find_all("a", href=True):
             href = a["href"]
             if any(x in href for x in ["get.php", "ipfs.io", "cloudflare-ipfs", "library.lol"]):
-                full = href if href.startswith("http") else ANNA_BASE + href
+                full = href if href.startswith("http") else mirror + href
                 if full not in urls:
                     urls.append(full)
     except Exception:
@@ -160,10 +179,10 @@ def try_download(url, filepath):
         return False
 
 
-def download_epub(title, author, out_dir):
+def download_epub(title, author, out_dir, mirror):
     search_title = clean_title(title)
     try:
-        md5s = anna_search(search_title)
+        md5s = anna_search(search_title, mirror)
     except ConnectionError as e:
         print(f"  {e}")
         return None
@@ -176,7 +195,7 @@ def download_epub(title, author, out_dir):
     filepath = out_dir / f"{safe_name}.epub"
 
     for md5 in md5s[:3]:
-        for url in get_download_urls(md5):
+        for url in get_download_urls(md5, mirror):
             if try_download(url, filepath):
                 print(f"  Downloaded: {filepath.name}")
                 return filepath
@@ -213,6 +232,12 @@ def main():
     else:
         print("Running in local mode — checking Calibre, adding downloaded books automatically")
 
+    print("Finding reachable Anna's Archive mirror...")
+    mirror = resolve_mirror()
+    if not mirror:
+        print("ERROR: No Anna's Archive mirror reachable. Check network/VPN.")
+        sys.exit(1)
+
     gr_books = get_goodreads_books()
     existing = get_existing_books()
 
@@ -231,7 +256,7 @@ def main():
     for book in missing:
         title, author = book["title"], book["author"]
         print(f"[{title}]")
-        filepath = download_epub(title, author, out_dir)
+        filepath = download_epub(title, author, out_dir, mirror)
         if filepath:
             if CI:
                 mark_downloaded(title)
