@@ -239,6 +239,8 @@ def zlib_download(book, out_dir):
     return filepath
 
 
+DERIVATIVE_WORDS = {"summary", "analysis", "guide", "review", "synopsis", "overview", "workbook", "study"}
+
 def title_matches(search_title, result_title):
     """Return True if result_title is a plausible match for search_title."""
     s = normalize(search_title)
@@ -248,6 +250,9 @@ def title_matches(search_title, result_title):
     search_words = set(s.split())
     result_words = set(r.split())
     if not search_words:
+        return False
+    # Reject derivative works unless the search title itself is one
+    if result_words & DERIVATIVE_WORDS and not (search_words & DERIVATIVE_WORDS):
         return False
     if search_words.issubset(result_words):
         return True
