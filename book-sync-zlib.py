@@ -180,30 +180,17 @@ def upload_to_drive(drive_service, folder_id, filepath):
 
 # --- Z-Library eapi ---
 
-def resolve_zlib_mirror():
-    for mirror in ZLIB_MIRRORS:
-        try:
-            r = SESSION.get(f"{mirror}/eapi/book/search", timeout=8)
-            if r.status_code < 500:
-                print(f"  Using Z-Library mirror: {mirror}")
-                return mirror
-        except Exception:
-            continue
-    return None
+def zlib_login(base, email, password):
+    """Attempt login on a specific mirror. Returns downloads_left or None on failure."""
+    try:
+        r = SESSION.post(f"{base}/eapi/user/login",
+                         data={"email": email, "password": password}, timeout=20)
+        resp = r.json()
+    except Exception:
+        return None
 
-def zlib_login(base):
-    email = os.getenv("ZLIBRARY_EMAIL")
-    password = os.getenv("ZLIBRARY_PASSWORD")
-    if not email or not password:
-        print("ERROR: ZLIBRARY_EMAIL and ZLIBRARY_PASSWORD must be set.")
-        sys.exit(1)
-
-    r = SESSION.post(f"{base}/eapi/user/login",
-                     data={"email": email, "password": password}, timeout=20)
-    resp = r.json()
     if not resp.get("success"):
-        print(f"ERROR: Z-Library login failed: {resp.get('error', resp)}")
-        sys.exit(1)
+        return None
 
     user = resp["user"]
     SESSION.cookies.set("remix_userid", str(user["id"]))
@@ -212,6 +199,25 @@ def zlib_login(base):
     downloads_left = user.get("downloads_limit", 10) - user.get("downloads_today", 0)
     print(f"  Logged in as {user['email']}. Downloads remaining today: {downloads_left}")
     return downloads_left
+
+
+def resolve_mirror_and_login():
+    """Find a working mirror and log in. Returns (base, downloads_left) or exits."""
+    email = os.getenv("ZLIBRARY_EMAIL")
+    password = os.getenv("ZLIBRARY_PASSWORD")
+    if not email or not password:
+        print("ERROR: ZLIBRARY_EMAIL and ZLIBRARY_PASSWORD must be set.")
+        sys.exit(1)
+
+    for mirror in ZLIB_MIRRORS:
+        print(f"  Trying {mirror}...")
+        downloads_left = zlib_login(mirror, email, password)
+        if downloads_left is not None:
+            print(f"  Using mirror: {mirror}")
+            return mirror, downloads_left
+
+    print("ERROR: Could not log in to any Z-Library mirror.")
+    sys.exit(1)
 
 
 def zlib_search(query, base):
@@ -386,14 +392,8 @@ def main():
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print("\nFinding reachable Z-Library mirror...")
-    zlib_base = resolve_zlib_mirror()
-    if not zlib_base:
-        print("ERROR: No Z-Library mirror reachable.")
-        sys.exit(1)
-
     print("\nLogging in to Z-Library...")
-    downloads_left = zlib_login(zlib_base)
+    zlib_base, downloads_left = resolve_mirror_and_login()
 
     gr_books = get_goodreads_books()
 
