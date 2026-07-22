@@ -283,15 +283,20 @@ def title_matches(search_title, result_title):
     return False
 
 
+def extract_last_name(author):
+    """Extract last name, handling both 'First Last' and 'Last, First' formats."""
+    author = author.strip()
+    if "," in author:
+        return normalize(author.split(",")[0])
+    parts = author.strip().split()
+    return normalize(parts[-1]) if parts else ""
+
+
 def author_matches(search_author, result_author):
-    """Return True if authors share at least one significant word (last name)."""
+    """Return True if last names match."""
     if not search_author or not result_author:
         return False
-    s = normalize(search_author)
-    r = normalize(result_author)
-    s_words = set(s.split()) - {"and", "the", "jr", "sr", "ii", "iii"}
-    r_words = set(r.split()) - {"and", "the", "jr", "sr", "ii", "iii"}
-    return bool(s_words & r_words)
+    return bool(extract_last_name(search_author) == extract_last_name(result_author))
 
 
 def download_epub(title, author, out_dir, base):
