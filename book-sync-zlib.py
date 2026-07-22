@@ -318,15 +318,13 @@ def download_epub(title, author, out_dir, base):
     author_confirmed = [b for b in title_matched if author_matches(author, b.get("author", ""))]
     title_only = [b for b in title_matched if not author_matches(author, b.get("author", ""))]
 
-    if author_confirmed:
-        ranked = author_confirmed + title_only
-    else:
+    if not author_confirmed:
         reason = f"title matched but no author match (expected: {author})"
-        print(f"  Warning — {reason}")
+        print(f"  Skipped — {reason}")
         mark_for_review(title, author, reason)
-        ranked = title_only
+        return None
 
-    for book in ranked:
+    for book in author_confirmed:
         try:
             filepath = zlib_download(book, out_dir, base)
             if filepath:
