@@ -225,7 +225,7 @@ def zlib_search(query, base):
         "message": query,
         "extensions[]": "epub",
         "languages[]": "english",
-        "limit": 5,
+        "limit": 20,
     }, timeout=20)
     resp = r.json()
     return resp.get("books", [])
@@ -314,9 +314,10 @@ def download_epub(title, author, out_dir, base):
         mark_for_review(title, author, reason)
         return None
 
-    # Sort: author matches first, then title-only matches
+    # Exact title matches first (API ranking isn't reliable)
+    title_matched.sort(key=lambda b: normalize(b.get("title", "")) == normalize(search_title), reverse=True)
+
     author_confirmed = [b for b in title_matched if author_matches(author, b.get("author", ""))]
-    title_only = [b for b in title_matched if not author_matches(author, b.get("author", ""))]
 
     if not author_confirmed:
         reason = f"title matched but no author match (expected: {author})"
