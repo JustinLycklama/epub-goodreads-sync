@@ -41,8 +41,12 @@ GDRIVE_INCOMING_NAME = "Incoming"
 
 RSS_URL = f"https://www.goodreads.com/review/list_rss/{GOODREADS_USER_ID}?shelf=to-read"
 
-ZLIB_DOMAIN = "1lib.sk"
-ZLIB_BASE = f"https://{ZLIB_DOMAIN}"
+ZLIB_MIRRORS = [
+    "https://z-library.se",
+    "https://z-lib.fm",
+    "https://1lib.sk",
+]
+ZLIB_BASE = None  # resolved at runtime
 HEADERS = {
     "Content-Type": "application/x-www-form-urlencoded",
     "User-Agent": (
@@ -176,14 +180,25 @@ def upload_to_drive(drive_service, folder_id, filepath):
 
 # --- Z-Library eapi ---
 
-def zlib_login():
+def resolve_zlib_mirror():
+    for mirror in ZLIB_MIRRORS:
+        try:
+            r = SESSION.get(f"{mirror}/eapi/book/search", timeout=8)
+            if r.status_code < 500:
+                print(f"  Using Z-Library mirror: {mirror}")
+                return mirror
+        except Exception:
+            continue
+    return None
+
+def zlib_login(base):
     email = os.getenv("ZLIBRARY_EMAIL")
     password = os.getenv("ZLIBRARY_PASSWORD")
     if not email or not password:
         print("ERROR: ZLIBRARY_EMAIL and ZLIBRARY_PASSWORD must be set.")
         sys.exit(1)
 
-    r = SESSION.post(f"{ZLIB_BASE}/eapi/user/login",
+    r = SESSION.post(f"{base}/eapi/user/login",
                      data={"email": email, "password": password}, timeout=20)
     resp = r.json()
     if not resp.get("success"):
@@ -199,8 +214,8 @@ def zlib_login():
     return downloads_left
 
 
-def zlib_search(query):
-    r = SESSION.post(f"{ZLIB_BASE}/eapi/book/search", data={
+def zlib_search(query, base):
+    r = SESSION.post(f"{base}/eapi/book/search", data={
         "message": query,
         "extensions[]": "epub",
         "languages[]": "english",
@@ -210,10 +225,10 @@ def zlib_search(query):
     return resp.get("books", [])
 
 
-def zlib_download(book, out_dir):
+def zlib_download(book, out_dir, base):
     book_id = book["id"]
     hash_id = book["hash"]
-    r = SESSION.get(f"{ZLIB_BASE}/eapi/book/{book_id}/{hash_id}/file", timeout=20)
+    r = SESSION.get(f"{base}/eapi/book/{book_id}/{hash_id}/file", timeout=20)
     resp = r.json()
 
     file_info = resp.get("file")
@@ -273,10 +288,10 @@ def author_matches(search_author, result_author):
     return bool(s_words & r_words)
 
 
-def download_epub(title, author, out_dir):
+def download_epub(title, author, out_dir, base):
     search_title = clean_title(title)
     try:
-        results = zlib_search(search_title)
+        results = zlib_search(search_title, base)
     except Exception as e:
         print(f"  Search error: {e}")
         return None
@@ -307,7 +322,7 @@ def download_epub(title, author, out_dir):
 
     for book in ranked:
         try:
-            filepath = zlib_download(book, out_dir)
+            filepath = zlib_download(book, out_dir, base)
             if filepath:
                 print(f"  Downloaded: {filepath.name}")
                 return filepath
@@ -371,8 +386,14 @@ def main():
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    print("\nFinding reachable Z-Library mirror...")
+    zlib_base = resolve_zlib_mirror()
+    if not zlib_base:
+        print("ERROR: No Z-Library mirror reachable.")
+        sys.exit(1)
+
     print("\nLogging in to Z-Library...")
-    downloads_left = zlib_login()
+    downloads_left = zlib_login(zlib_base)
 
     gr_books = get_goodreads_books()
 
@@ -395,7 +416,7 @@ def main():
     for book in missing:
         title, author = book["title"], book["author"]
         print(f"[{title}]")
-        filepath = download_epub(title, author, out_dir)
+        filepath = download_epub(title, author, out_dir, zlib_base)
         if filepath:
             if CI:
                 if upload_to_drive(drive_service, incoming_folder_id, filepath):
