@@ -42,7 +42,7 @@ GDRIVE_INCOMING_NAME = "Incoming"
 RSS_URL = f"https://www.goodreads.com/review/list_rss/{GOODREADS_USER_ID}?shelf=to-read"
 
 ZLIB_MIRRORS = [
-    "https://z-library.se",
+    "https://z-lib.sk",
     "https://z-lib.fm",
     "https://1lib.sk",
 ]
