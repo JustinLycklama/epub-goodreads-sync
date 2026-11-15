@@ -48,6 +48,7 @@ LOCAL_TEMP_DIR = Path.home() / "Documents" / "calibre-temp"
 GDRIVE_INCOMING_NAME = "Incoming"
 
 ZLIB_MIRRORS = [
+    "https://z-library.ec",
     "https://z-lib.sk",
     "https://z-lib.fm",
     "https://1lib.sk",
