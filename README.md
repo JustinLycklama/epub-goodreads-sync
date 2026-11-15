@@ -95,12 +95,34 @@ Books that couldn't be matched are logged in `needs_review.txt` with the reason.
 
 ---
 
-## Local Mode
+## Local Mode (recommended)
 
-Runs against your local Calibre library instead of Google Drive:
+Runs against your local Calibre library instead of Google Drive. Uses your residential IP, so Z-Library search is not blocked.
+
+**Setup:**
+
+Copy `.env.example` to `.env` and fill in your credentials:
+
+```
+ZLIBRARY_EMAIL=your@email.com
+ZLIBRARY_PASSWORD=yourpassword
+GOODREADS_COOKIES=paste_cookie_string_from_get_cookies.py
+```
+
+Run manually:
 
 ```bash
 python book-sync-zlib.py
 ```
 
-Checks what's already in Calibre, downloads missing books, and adds them directly via `calibredb`.
+**Schedule with Task Scheduler (weekly):**
+
+1. Open Task Scheduler → Create Basic Task
+2. Trigger: Weekly, Sunday, 8:00 AM
+3. Action: Start a program
+   - Program: `C:\path\to\python.exe`
+   - Arguments: `book-sync-zlib.py`
+   - Start in: `C:\Users\Justin\Development\epub-goodreads-sync`
+4. In Properties → General: check **Run whether user is logged on or not**
+
+The `.env` file is loaded automatically — no need to set environment variables in Windows.

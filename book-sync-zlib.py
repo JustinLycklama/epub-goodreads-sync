@@ -25,6 +25,15 @@ import sys
 import io
 from pathlib import Path
 
+# Load .env if present (local development)
+_env_file = Path(__file__).parent / ".env"
+if _env_file.exists():
+    for _line in _env_file.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _, _v = _line.partition("=")
+            os.environ.setdefault(_k.strip(), _v.strip())
+
 # --- Config ---
 GOODREADS_USER_ID = "197955244"
 CALIBRE_LIBRARY = r"C:\Users\Justin\Google Drive\Books\Calibre Library"
