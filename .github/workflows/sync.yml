@@ -30,6 +30,8 @@ jobs:
           GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
           GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
           GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
+          GOODREADS_EMAIL: ${{ secrets.GOODREADS_EMAIL }}
+          GOODREADS_PASSWORD: ${{ secrets.GOODREADS_PASSWORD }}
         run: python book-sync-zlib.py
 
       - name: Commit downloaded.txt

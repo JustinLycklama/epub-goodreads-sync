@@ -16,7 +16,6 @@ Dependencies:
     pip install feedparser requests beautifulsoup4 google-api-python-client google-auth
 """
 
-import feedparser
 import requests
 import subprocess
 import json
@@ -38,8 +37,6 @@ REVIEW_FILE = REPO_ROOT / "needs_review.txt"
 LOCAL_TEMP_DIR = Path(r"C:\Users\Justin\Documents\callibre-temp")
 
 GDRIVE_INCOMING_NAME = "Incoming"
-
-RSS_URL = f"https://www.goodreads.com/review/list_rss/{GOODREADS_USER_ID}?shelf=to-read"
 
 ZLIB_MIRRORS = [
     "https://z-lib.sk",
@@ -78,17 +75,77 @@ def clean_title(title):
 # --- Goodreads ---
 
 def get_goodreads_books():
-    print("Fetching Goodreads want-to-read shelf...")
-    feed = feedparser.parse(RSS_URL)
-    if feed.bozo and not feed.entries:
-        print("ERROR: Could not fetch Goodreads RSS. Is your shelf set to public?")
+    from bs4 import BeautifulSoup
+
+    email = os.getenv("GOODREADS_EMAIL")
+    password = os.getenv("GOODREADS_PASSWORD")
+    if not email or not password:
+        print("ERROR: GOODREADS_EMAIL and GOODREADS_PASSWORD must be set.")
         sys.exit(1)
+
+    print("Logging in to Goodreads...")
+    gr_session = requests.Session()
+    gr_session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        )
+    })
+
+    r = gr_session.get("https://www.goodreads.com/user/sign_in", timeout=20)
+    r.raise_for_status()
+    soup = BeautifulSoup(r.text, "html.parser")
+    token_el = soup.find("input", {"name": "authenticity_token"})
+    if not token_el:
+        print("ERROR: Could not find CSRF token on Goodreads sign-in page.")
+        sys.exit(1)
+
+    r = gr_session.post(
+        "https://www.goodreads.com/user/sign_in",
+        data={
+            "utf8": "✓",
+            "authenticity_token": token_el["value"],
+            "user[email]": email,
+            "user[password]": password,
+            "remember_me": "on",
+            "n": "",
+        },
+        allow_redirects=True,
+        timeout=20,
+    )
+    if "/user/sign_in" in r.url:
+        print("ERROR: Goodreads login failed. Check GOODREADS_EMAIL / GOODREADS_PASSWORD.")
+        sys.exit(1)
+
+    print("  Logged in. Fetching want-to-read shelf...")
     books = []
-    for entry in feed.entries:
-        title = entry.get("title", "").strip()
-        author = (entry.get("author_name") or entry.get("author") or "").strip()
-        if title:
-            books.append({"title": title, "author": author})
+    page = 1
+    while True:
+        url = (
+            f"https://www.goodreads.com/review/list/{GOODREADS_USER_ID}"
+            f"?shelf=to-read&per_page=100&page={page}"
+        )
+        r = gr_session.get(url, timeout=20)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        rows = soup.select("tr.bookalike.review")
+        if not rows:
+            break
+
+        for row in rows:
+            title_el = row.select_one(".field.title a")
+            author_el = row.select_one(".field.author .value")
+            if title_el:
+                title = (title_el.get("title") or title_el.get_text()).strip()
+                author = author_el.get_text(strip=True) if author_el else ""
+                books.append({"title": title, "author": author})
+
+        if len(rows) < 100:
+            break
+        page += 1
+
     print(f"  {len(books)} books on shelf")
     return books
 
