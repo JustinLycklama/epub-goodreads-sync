@@ -134,11 +134,16 @@ def _goodreads_login(gr_session):
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
+    # Token may be a hidden input OR a <meta name="csrf-token"> (newer Rails)
     token_el = soup.find("input", {"name": "authenticity_token"})
-    if not token_el:
-        # Dump page info to help diagnose (Cloudflare / Amazon SSO redirect, etc.)
+    csrf_token = token_el["value"] if token_el else None
+    if not csrf_token:
+        meta = soup.find("meta", {"name": "csrf-token"})
+        if meta:
+            csrf_token = meta.get("content")
+    if not csrf_token:
         print(f"  DEBUG: sign_in page URL after redirects: {r.url}")
-        print(f"  DEBUG: first 300 chars: {r.text[:300]!r}")
+        print(f"  DEBUG: first 500 chars: {r.text[:500]!r}")
         print("ERROR: Could not find CSRF token on Goodreads sign-in page.")
         sys.exit(1)
 
@@ -146,7 +151,7 @@ def _goodreads_login(gr_session):
         "https://www.goodreads.com/user/sign_in",
         data={
             "utf8": "✓",
-            "authenticity_token": token_el["value"],
+            "authenticity_token": csrf_token,
             "user[email]": email,
             "user[password]": password,
             "remember_me": "on",
