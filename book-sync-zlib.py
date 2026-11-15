@@ -275,7 +275,8 @@ def resolve_mirror_and_login():
             print(f"  Using mirror: {mirror}")
             return mirror, downloads_left
         except Exception:
-            print(f"  {mirror} login OK but search blocked (status {r.status_code}), trying next...")
+            print(f"  {mirror} login OK but search blocked (status {r.status_code})")
+            print(f"  DEBUG 513 body: {r.text[:400]!r}")
             continue
 
     print("ERROR: Could not find a Z-Library mirror with working login and search.")
