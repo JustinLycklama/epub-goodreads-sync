@@ -114,6 +114,8 @@ def get_goodreads_books():
         soup = BeautifulSoup(r.text, "html.parser")
         rows = soup.select("tr.bookalike.review")
         if not rows:
+            print(f"  DEBUG: shelf page URL: {r.url}")
+            print(f"  DEBUG: HTML snippet: {r.text[:1000]!r}")
             break
 
         for row in rows:
