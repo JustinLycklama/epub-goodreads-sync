@@ -43,7 +43,7 @@ CI = os.getenv("CI", "false").lower() == "true"
 REPO_ROOT = Path(__file__).parent
 DOWNLOADED_FILE = REPO_ROOT / "downloaded.txt"
 REVIEW_FILE = REPO_ROOT / "needs_review.txt"
-LOCAL_TEMP_DIR = Path(r"C:\Users\Justin\Documents\callibre-temp")
+LOCAL_TEMP_DIR = Path.home() / "Documents" / "calibre-temp"
 
 GDRIVE_INCOMING_NAME = "Incoming"
 
