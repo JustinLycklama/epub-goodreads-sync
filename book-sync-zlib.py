@@ -147,6 +147,13 @@ def _goodreads_login(gr_session):
         print("ERROR: Could not find CSRF token on Goodreads sign-in page.")
         sys.exit(1)
 
+    # Debug: show form action and all input field names
+    form = soup.find("form")
+    if form:
+        print(f"  DEBUG: form action: {form.get('action')}")
+        for inp in form.find_all("input"):
+            print(f"  DEBUG: input name={inp.get('name')!r} type={inp.get('type')!r}")
+
     r = gr_session.post(
         "https://www.goodreads.com/user/sign_in",
         data={
