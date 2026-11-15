@@ -74,123 +74,62 @@ def clean_title(title):
 
 # --- Goodreads ---
 
-def _goodreads_session():
-    s = requests.Session()
-    s.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        )
-    })
-    return s
+def get_goodreads_books():
+    from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
-
-def _parse_shelf_pages(gr_session):
-    from bs4 import BeautifulSoup
-    books = []
-    page = 1
-    while True:
-        url = (
-            f"https://www.goodreads.com/review/list/{GOODREADS_USER_ID}"
-            f"?shelf=to-read&per_page=100&page={page}"
-        )
-        r = gr_session.get(url, timeout=20)
-        r.raise_for_status()
-
-        # Redirected to sign-in — not public
-        if "/user/sign_in" in r.url:
-            return None
-
-        soup = BeautifulSoup(r.text, "html.parser")
-        rows = soup.select("tr.bookalike.review")
-        if not rows:
-            break
-
-        for row in rows:
-            title_el = row.select_one(".field.title a")
-            author_el = row.select_one(".field.author .value")
-            if title_el:
-                title = (title_el.get("title") or title_el.get_text()).strip()
-                author = author_el.get_text(strip=True) if author_el else ""
-                books.append({"title": title, "author": author})
-
-        if len(rows) < 100:
-            break
-        page += 1
-    return books
-
-
-def _goodreads_login(gr_session):
-    from bs4 import BeautifulSoup
     email = os.getenv("GOODREADS_EMAIL")
     password = os.getenv("GOODREADS_PASSWORD")
     if not email or not password:
         print("ERROR: GOODREADS_EMAIL and GOODREADS_PASSWORD must be set.")
         sys.exit(1)
 
-    print("  Shelf requires login. Logging in to Goodreads...")
-    r = gr_session.get("https://www.goodreads.com/user/sign_in", timeout=20)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "html.parser")
+    print("Fetching Goodreads want-to-read shelf (headless browser)...")
+    books = []
 
-    # Token may be a hidden input OR a <meta name="csrf-token"> (newer Rails)
-    token_el = soup.find("input", {"name": "authenticity_token"})
-    csrf_token = token_el["value"] if token_el else None
-    if not csrf_token:
-        meta = soup.find("meta", {"name": "csrf-token"})
-        if meta:
-            csrf_token = meta.get("content")
-    if not csrf_token:
-        print(f"  DEBUG: sign_in page URL after redirects: {r.url}")
-        print(f"  DEBUG: first 500 chars: {r.text[:500]!r}")
-        print("ERROR: Could not find CSRF token on Goodreads sign-in page.")
-        sys.exit(1)
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
 
-    # Debug: show form action and all input field names
-    form = soup.find("form")
-    if form:
-        print(f"  DEBUG: form action: {form.get('action')}")
-        for inp in form.find_all("input"):
-            print(f"  DEBUG: input name={inp.get('name')!r} type={inp.get('type')!r}")
+        page.goto("https://www.goodreads.com/user/sign_in", wait_until="networkidle")
+        page.fill("input[type='email']", email)
+        page.fill("input[type='password']", password)
+        page.click("input[type='submit'], button[type='submit']")
 
-    r = gr_session.post(
-        "https://www.goodreads.com/user/sign_in",
-        data={
-            "utf8": "✓",
-            "authenticity_token": csrf_token,
-            "user[email]": email,
-            "user[password]": password,
-            "remember_me": "on",
-            "n": "",
-        },
-        allow_redirects=True,
-        timeout=20,
-    )
-    if "/user/sign_in" in r.url:
-        print("ERROR: Goodreads login failed. Check GOODREADS_EMAIL / GOODREADS_PASSWORD.")
-        sys.exit(1)
+        try:
+            page.wait_for_url(
+                lambda url: "/user/sign_in" not in url, timeout=15000
+            )
+        except PWTimeout:
+            print("ERROR: Goodreads login failed (timed out). Check GOODREADS_EMAIL / GOODREADS_PASSWORD.")
+            browser.close()
+            sys.exit(1)
 
-    print("  Logged in.")
-    return gr_session
+        print("  Logged in. Fetching shelf...")
+        page_num = 1
+        while True:
+            url = (
+                f"https://www.goodreads.com/review/list/{GOODREADS_USER_ID}"
+                f"?shelf=to-read&per_page=100&page={page_num}"
+            )
+            page.goto(url, wait_until="networkidle")
 
+            rows = page.query_selector_all("tr.bookalike.review")
+            if not rows:
+                break
 
-def get_goodreads_books():
-    print("Fetching Goodreads want-to-read shelf...")
-    gr_session = _goodreads_session()
+            for row in rows:
+                title_el = row.query_selector(".field.title a")
+                author_el = row.query_selector(".field.author .value")
+                if title_el:
+                    title = (title_el.get_attribute("title") or title_el.inner_text()).strip()
+                    author = author_el.inner_text().strip() if author_el else ""
+                    books.append({"title": title, "author": author})
 
-    # Try public shelf first (no auth needed if shelf is public)
-    books = _parse_shelf_pages(gr_session)
-    if books is not None:
-        print(f"  {len(books)} books on shelf (public, no login needed)")
-        return books
+            if len(rows) < 100:
+                break
+            page_num += 1
 
-    # Shelf requires auth
-    gr_session = _goodreads_login(gr_session)
-    books = _parse_shelf_pages(gr_session)
-    if books is None:
-        print("ERROR: Could not fetch shelf even after login.")
-        sys.exit(1)
+        browser.close()
 
     print(f"  {len(books)} books on shelf")
     return books
