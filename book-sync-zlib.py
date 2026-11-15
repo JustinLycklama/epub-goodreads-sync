@@ -36,7 +36,7 @@ if _env_file.exists():
 
 # --- Config ---
 GOODREADS_USER_ID = "197955244"
-CALIBRE_LIBRARY = r"C:\Users\Justin\Google Drive\Books\Calibre Library"
+CALIBRE_LIBRARY = r"G:\My Drive\Books\Calibre Library"
 CALIBREDB = r"C:\Program Files\Calibre2\calibredb.exe"
 
 CI = os.getenv("CI", "false").lower() == "true"
