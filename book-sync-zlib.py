@@ -266,7 +266,10 @@ def zlib_search(query, base):
         "languages[]": "english",
         "limit": 20,
     }, timeout=20)
-    resp = r.json()
+    try:
+        resp = r.json()
+    except Exception:
+        return []
     return resp.get("books", [])
 
 
