@@ -250,7 +250,6 @@ def zlib_login(base, email, password):
 
     downloads_left = user.get("downloads_limit", 10) - user.get("downloads_today", 0)
     print(f"  Logged in as {user['email']}. Downloads remaining today: {downloads_left}")
-    print(f"  DEBUG login user keys: {list(user.keys())}")
     return downloads_left
 
 
@@ -276,8 +275,7 @@ def resolve_mirror_and_login():
             print(f"  Using mirror: {mirror}")
             return mirror, downloads_left
         except Exception:
-            print(f"  {mirror} login OK but search blocked (status {r.status_code})")
-            print(f"  DEBUG 513 body: {r.text[:400]!r}")
+            print(f"  {mirror} login OK but search blocked (status {r.status_code}), trying next...")
             continue
 
     print("ERROR: Could not find a Z-Library mirror with working login and search.")
