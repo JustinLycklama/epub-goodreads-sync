@@ -249,6 +249,7 @@ def zlib_login(base, email, password):
 
     downloads_left = user.get("downloads_limit", 10) - user.get("downloads_today", 0)
     print(f"  Logged in as {user['email']}. Downloads remaining today: {downloads_left}")
+    print(f"  DEBUG login user keys: {list(user.keys())}")
     return downloads_left
 
 
