@@ -75,65 +75,58 @@ def clean_title(title):
 # --- Goodreads ---
 
 def get_goodreads_books():
-    from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+    from bs4 import BeautifulSoup
 
-    email = os.getenv("GOODREADS_EMAIL")
-    password = os.getenv("GOODREADS_PASSWORD")
-    if not email or not password:
-        print("ERROR: GOODREADS_EMAIL and GOODREADS_PASSWORD must be set.")
+    cookie_str = os.getenv("GOODREADS_COOKIES")
+    if not cookie_str:
+        print("ERROR: GOODREADS_COOKIES must be set. Run get_cookies.py locally to generate it.")
         sys.exit(1)
 
-    print("Fetching Goodreads want-to-read shelf (headless browser)...")
+    gr_session = requests.Session()
+    gr_session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        )
+    })
+    for part in cookie_str.split(";"):
+        part = part.strip()
+        if "=" in part:
+            name, _, value = part.partition("=")
+            gr_session.cookies.set(name.strip(), value.strip(), domain=".goodreads.com")
+
+    print("Fetching Goodreads want-to-read shelf...")
     books = []
+    page_num = 1
+    while True:
+        url = (
+            f"https://www.goodreads.com/review/list/{GOODREADS_USER_ID}"
+            f"?shelf=to-read&per_page=100&page={page_num}"
+        )
+        r = gr_session.get(url, timeout=20)
+        r.raise_for_status()
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-
-        page.goto("https://www.goodreads.com/user/sign_in", wait_until="networkidle")
-
-        print(f"  DEBUG: page URL after load: {page.url}")
-        print(f"  DEBUG: raw HTML snippet: {page.content()[:800]!r}")
-
-        page.fill("input[type='email']", email)
-        page.fill("input[type='password']", password)
-        page.click("input[type='submit'], button[type='submit']")
-
-        try:
-            page.wait_for_url(
-                lambda url: "/user/sign_in" not in url, timeout=15000
-            )
-        except PWTimeout:
-            print("ERROR: Goodreads login failed (timed out). Check GOODREADS_EMAIL / GOODREADS_PASSWORD.")
-            browser.close()
+        if "/user/sign_in" in r.url:
+            print("ERROR: Goodreads cookies expired. Run get_cookies.py and update the GOODREADS_COOKIES secret.")
             sys.exit(1)
 
-        print("  Logged in. Fetching shelf...")
-        page_num = 1
-        while True:
-            url = (
-                f"https://www.goodreads.com/review/list/{GOODREADS_USER_ID}"
-                f"?shelf=to-read&per_page=100&page={page_num}"
-            )
-            page.goto(url, wait_until="networkidle")
+        soup = BeautifulSoup(r.text, "html.parser")
+        rows = soup.select("tr.bookalike.review")
+        if not rows:
+            break
 
-            rows = page.query_selector_all("tr.bookalike.review")
-            if not rows:
-                break
+        for row in rows:
+            title_el = row.select_one(".field.title a")
+            author_el = row.select_one(".field.author .value")
+            if title_el:
+                title = (title_el.get("title") or title_el.get_text()).strip()
+                author = author_el.get_text(strip=True) if author_el else ""
+                books.append({"title": title, "author": author})
 
-            for row in rows:
-                title_el = row.query_selector(".field.title a")
-                author_el = row.query_selector(".field.author .value")
-                if title_el:
-                    title = (title_el.get_attribute("title") or title_el.inner_text()).strip()
-                    author = author_el.inner_text().strip() if author_el else ""
-                    books.append({"title": title, "author": author})
-
-            if len(rows) < 100:
-                break
-            page_num += 1
-
-        browser.close()
+        if len(rows) < 100:
+            break
+        page_num += 1
 
     print(f"  {len(books)} books on shelf")
     return books

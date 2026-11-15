@@ -22,9 +22,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Install Playwright browser
-        run: playwright install chromium --with-deps
-
       - name: Run sync
         env:
           CI: "true"
@@ -33,8 +30,7 @@ jobs:
           GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
           GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
           GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
-          GOODREADS_EMAIL: ${{ secrets.GOODREADS_EMAIL }}
-          GOODREADS_PASSWORD: ${{ secrets.GOODREADS_PASSWORD }}
+          GOODREADS_COOKIES: ${{ secrets.GOODREADS_COOKIES }}
         run: python book-sync-zlib.py
 
       - name: Commit downloaded.txt
