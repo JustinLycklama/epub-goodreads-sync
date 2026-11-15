@@ -159,18 +159,17 @@ def get_existing_books_downloaded_txt():
 
 
 def get_existing_books_local():
-    """Check Calibre library via calibredb (local mode)."""
-    print("Reading Calibre library...")
-    result = subprocess.run(
-        [CALIBREDB, "list", "--fields", "title,authors", "--for-machine",
-         "--library-path", CALIBRE_LIBRARY],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        print(f"ERROR: calibredb failed: {result.stderr}")
+    """Check Calibre library via SQLite (works while GUI is open)."""
+    import sqlite3
+    db_path = Path(CALIBRE_LIBRARY) / "metadata.db"
+    if not db_path.exists():
+        print(f"ERROR: Calibre metadata.db not found at {db_path}")
         sys.exit(1)
-    data = json.loads(result.stdout)
-    titles = {normalize(book["title"]) for book in data}
+    print("Reading Calibre library...")
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    rows = con.execute("SELECT title FROM books").fetchall()
+    con.close()
+    titles = {normalize(r[0]) for r in rows}
     print(f"  {len(titles)} books in Calibre")
     return titles
 
@@ -409,20 +408,17 @@ def download_epub(title, author, out_dir, base):
     return None
 
 
-# --- Calibre (local only) ---
+# --- Local delivery ---
 
-def add_to_calibre(filepath):
-    result = subprocess.run(
-        [CALIBREDB, "add", str(filepath), "--library-path", CALIBRE_LIBRARY],
-        capture_output=True, text=True,
-    )
-    if result.returncode == 0:
-        print(f"  Added to Calibre")
-        filepath.unlink()
-        return True
-    else:
-        print(f"  calibredb add failed: {result.stderr.strip()}")
-        return False
+def deliver_local(filepath):
+    """Copy epub into Drive/Incoming for Calibre auto-add."""
+    import shutil
+    incoming = Path(CALIBRE_LIBRARY).parent / "Incoming"
+    incoming.mkdir(exist_ok=True)
+    dest = incoming / filepath.name
+    shutil.move(str(filepath), dest)
+    print(f"  Moved to Incoming: {filepath.name}")
+    return True
 
 
 # --- Main ---
@@ -453,7 +449,7 @@ def main():
         existing = get_existing_books_downloaded_txt()
         out_dir = REPO_ROOT / "downloads"
     else:
-        print("Running in local mode — checking Calibre, adding downloaded books automatically")
+        print("Running in local mode — reading Calibre library, dropping EPUBs into Incoming")
         drive_service = None
         incoming_folder_id = None
         existing = get_existing_books_local()
@@ -494,7 +490,10 @@ def main():
                 else:
                     skipped.append(title)
             else:
-                add_to_calibre(filepath)
+                if deliver_local(filepath):
+                    mark_downloaded(title)
+                else:
+                    skipped.append(title)
         else:
             skipped.append(title)
 
