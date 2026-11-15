@@ -241,7 +241,7 @@ def zlib_login(base, email, password):
 
 
 def resolve_mirror_and_login():
-    """Find a working mirror and log in. Returns (base, downloads_left) or exits."""
+    """Find a working mirror (login + search both succeed). Returns (base, downloads_left) or exits."""
     email = os.getenv("ZLIBRARY_EMAIL")
     password = os.getenv("ZLIBRARY_PASSWORD")
     if not email or not password:
@@ -251,11 +251,21 @@ def resolve_mirror_and_login():
     for mirror in ZLIB_MIRRORS:
         print(f"  Trying {mirror}...")
         downloads_left = zlib_login(mirror, email, password)
-        if downloads_left is not None:
+        if downloads_left is None:
+            continue
+        # Verify search also works on this mirror (login may succeed but search can be blocked)
+        try:
+            r = SESSION.post(f"{mirror}/eapi/book/search", data={
+                "message": "test", "extensions[]": "epub", "limit": 1,
+            }, timeout=20)
+            r.json()  # will raise if response is not JSON
             print(f"  Using mirror: {mirror}")
             return mirror, downloads_left
+        except Exception:
+            print(f"  {mirror} login OK but search blocked (status {r.status_code}), trying next...")
+            continue
 
-    print("ERROR: Could not log in to any Z-Library mirror.")
+    print("ERROR: Could not find a Z-Library mirror with working login and search.")
     sys.exit(1)
 
 
@@ -266,7 +276,6 @@ def zlib_search(query, base):
         "languages[]": "english",
         "limit": 20,
     }, timeout=20)
-    print(f"  DEBUG search: status={r.status_code} body={r.text[:200]!r}")
     try:
         resp = r.json()
     except Exception:
