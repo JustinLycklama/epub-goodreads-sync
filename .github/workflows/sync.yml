@@ -2,8 +2,6 @@ name: Sync Books
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 8 * * 0"  # Every Sunday at 8am UTC
 
 jobs:
   sync:
