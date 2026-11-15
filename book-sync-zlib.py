@@ -266,6 +266,7 @@ def zlib_search(query, base):
         "languages[]": "english",
         "limit": 20,
     }, timeout=20)
+    print(f"  DEBUG search: status={r.status_code} body={r.text[:200]!r}")
     try:
         resp = r.json()
     except Exception:
