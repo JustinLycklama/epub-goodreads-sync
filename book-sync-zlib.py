@@ -42,6 +42,10 @@ ZLIB_MIRRORS = [
     "https://z-lib.sk",
     "https://z-lib.fm",
     "https://1lib.sk",
+    "https://z-library.se",
+    "https://singlelogin.re",
+    "https://zlibrary.to",
+    "https://lib.to",
 ]
 ZLIB_BASE = None  # resolved at runtime
 HEADERS = {
