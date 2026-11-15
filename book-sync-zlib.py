@@ -112,20 +112,8 @@ def get_goodreads_books():
             sys.exit(1)
 
         soup = BeautifulSoup(r.text, "html.parser")
-        rows = soup.select("tr.bookalike.review")
+        rows = soup.select("div.bookalike.review")
         if not rows:
-            # Find where the book list actually starts
-            idx = r.text.find("bookalike")
-            if idx == -1:
-                idx = r.text.find("bookTitle")
-            if idx == -1:
-                idx = r.text.find("field title")
-            print(f"  DEBUG: 'bookalike' index in HTML: {idx}")
-            print(f"  DEBUG: HTML around index: {r.text[max(0,idx-100):idx+500]!r}")
-            # Also show all <tr class= patterns to find the right selector
-            import re
-            tr_classes = re.findall(r'<tr[^>]*class=["\']([^"\']+)["\']', r.text)
-            print(f"  DEBUG: tr classes found: {tr_classes[:10]}")
             break
 
         for row in rows:
