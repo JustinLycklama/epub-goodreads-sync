@@ -92,11 +92,8 @@ def get_goodreads_books():
 
         page.goto("https://www.goodreads.com/user/sign_in", wait_until="networkidle")
 
-        # Debug: save screenshot so we can see what the page looks like
-        page.screenshot(path="/tmp/gr_signin.png")
         print(f"  DEBUG: page URL after load: {page.url}")
-        # Print visible text to understand page structure
-        print(f"  DEBUG: visible text: {page.inner_text('body')[:600]!r}")
+        print(f"  DEBUG: raw HTML snippet: {page.content()[:800]!r}")
 
         page.fill("input[type='email']", email)
         page.fill("input[type='password']", password)
